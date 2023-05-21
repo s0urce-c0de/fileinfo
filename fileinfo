@@ -1,1 +1,136 @@
-#!/usr/bin/env python3 # -*- encoding: utf-8 -*- import re import os import sys import click import textwrap import socket import requests_cache import warnings from pathlib import Path from requests import head, ConnectionError, Timeout from bs4 import BeautifulSoup, Tag, NavigableString, MarkupResemblesLocatorWarning cache_path=Path(__file__).resolve().parent.parent / 'share' / 'fileinfo' / 'db' / 'fileinfo-cli-cache' os.makedirs(cache_path.parent, exist_ok=True) # remove bs4 warning when using files like .f # comment next line if you want to test (it might change) warnings.filterwarnings("ignore", category=MarkupResemblesLocatorWarning) # use requests_cache cached session for faster responses requests=requests_cache.CachedSession(cache_path) def valid_extension(extension): return requests.get(f"http://fileinfo.com/extension/{extension.lstrip('.')}").status_code in [i for i in range(0, 400)] def get_file_type(extension): return re.findall('<h2 class="title">(.*?)</h2>', requests.get(f"http://fileinfo.com/extension/{extension.lstrip('.')}").text)[0] def get_description(extension): messy_description = re.findall('<div class="infoBox">\n<p>(.*?)</p>\n</div>', requests.get(f"http://fileinfo.com/extension/{extension.lstrip('.')}").text)[0] # create html bs4 object for parsing soup = BeautifulSoup(messy_description, 'html.parser') # recursivly format tags for tag in soup.find_all(): format_html(tag) # https://tutorialedge.net/python/removing-html-from-string/ # remove html tags return re.compile(r'<[^>]+>').sub('', str(soup.get_text())).replace(" ", " ") def internet_connection(host="1.1.1.1", port=443, timeout=3): """ Host: 1.1.1.1 (1.1.1.1) OpenPort: 443/tcp Service: domain (DNS/TCP) """ try: response = head('http://1.1.1.1', timeout=3) return True except (ConnectionError, Timeout) as Error: return False except: print("Unrecognized error in internet connection check.") return None # Recursively format the HTML with escape codes def format_html(tag): # escape codes for formatting escape_codes = { 'b': ('\033[1m', '\033[0m'), 'i': ('\033[3m', '\033[0m'), 'a': ('\033]8;;', '\033]8;;\a') } # define protocols for checking text later on protocols = ["http://", "https://", "ftp://", "ftps://", "mailto:", "tel:"] if isinstance(tag, Tag) and tag.name in escape_codes and not tag.name == 'a': start_code, end_code = escape_codes[tag.name] tag.insert_before(start_code) tag.insert_after(end_code) elif isinstance(tag, Tag) and tag.name == 'a': start_code, end_code = escape_codes['a'] href = tag['href'] protocol_used=[] for protocol in protocols: protocol_used.append(href.startswith(protocol)) has_protocol=any(protocol_used) if not has_protocol and not href.startswith('/'): href="http://"+href elif href.startswith('/'): href="http://fileinfo.com"+href text = str(tag.string).replace('\n', '').replace('\r', '').replace('\t', '') new_tag = Tag(name='a') new_tag['href'] = href new_tag.string = start_code + href + "\a" + text + end_code tag.replace_with(new_tag) elif isinstance(tag, NavigableString): # Escape any special characters in the text text = str(tag).replace('\n', '').replace('\r', '').replace('\t', '') tag.replace_with(text) else: for child in tag.children: format_html(child) @click.command(context_settings=dict(help_option_names=["-h", "--help"])) @click.argument("extension", type=str) def main(extension): """ Get information on over 10,000 file extensions right from the terminal. """ # Check if the user is connected to the internet if not internet_connection(): click.echo("Please connect to the internet to use.") raise # spliting allows user give a file as # argument or file extension with or without dot # like filename.extension .extension or extension # But first try for extensions like if tar.gz or tar.bz2, etc. extensions_split = extension.split(".") if len(extensions_split) > 1 and valid_extension(extensions_split[-2] + '.' + extensions_split[-1]): extension = extensions_split[-2] + '.' + extensions_split[-1] # incase it is an extension like py, gz, js, html, etc. elif valid_extension(extensions_split[-1]): extension = extensions_split[-1] else: click.echo("Sorry, but that extension is not valid") raise # iniate url url = f"https://fileinfo.com/extension/{extension.lstrip('.')}" # create cached response html = requests.get(url).text file_type = get_file_type(extension) description = get_description(extension) click.echo("\033[1mFull form: \033[0m" + file_type) click.echo("\033[1m\nWhat is a " + extension.lstrip(".") + " file?\033[0m") click.echo(description) if __name__ == "__main__": main()
+#!/usr/bin/env python3
+# -*- encoding: utf-8 -*-
+
+import re
+import os
+import sys
+import click
+import textwrap
+import socket
+import requests_cache
+import warnings
+from pathlib import Path
+from requests import head, ConnectionError, Timeout
+from bs4 import BeautifulSoup, Tag, NavigableString, MarkupResemblesLocatorWarning
+cache_path=Path(__file__).resolve().parent.parent / 'share' / 'fileinfo' / 'db' / 'fileinfo-cli-cache'
+os.makedirs(cache_path.parent, exist_ok=True)
+# remove bs4 warning when using files like .f
+# comment next line if you want to test (it might change)
+warnings.filterwarnings("ignore", category=MarkupResemblesLocatorWarning)
+# use requests_cache cached session for faster responses
+requests=requests_cache.CachedSession(cache_path)
+def valid_extension(extension):
+    return requests.get(f"http://fileinfo.com/extension/{extension.lstrip('.')}").status_code in [i for i in range(0, 400)]
+
+
+def get_file_type(extension):
+    return re.findall('<h2 class="title">(.*?)</h2>', requests.get(f"http://fileinfo.com/extension/{extension.lstrip('.')}").text)[0]
+
+
+def get_description(extension):
+    messy_description = re.findall('<div class="infoBox">\n<p>(.*?)</p>\n</div>', requests.get(f"http://fileinfo.com/extension/{extension.lstrip('.')}").text)[0]
+    # create html bs4 object for parsing
+    soup = BeautifulSoup(messy_description, 'html.parser')
+    # recursivly format tags
+    for tag in soup.find_all():
+        format_html(tag)
+    # https://tutorialedge.net/python/removing-html-from-string/
+    # remove html tags
+    return re.compile(r'<[^>]+>').sub('', str(soup.get_text())).replace("  ", " ")
+
+
+def internet_connection(host="1.1.1.1", port=443, timeout=3):
+    """
+    Host: 1.1.1.1 (1.1.1.1)
+    OpenPort: 443/tcp
+    Service: domain (DNS/TCP)
+    """
+    try:
+        response = head('http://1.1.1.1', timeout=3)
+        return True
+    except (ConnectionError, Timeout) as Error:
+        return False
+    except:
+        print("Unrecognized error in internet connection check.")
+        return None
+
+
+# Recursively format the HTML with escape codes
+def format_html(tag):
+    # escape codes for formatting
+    escape_codes = {
+        'b': ('\033[1m', '\033[0m'),
+        'i': ('\033[3m', '\033[0m'),
+        'a': ('\033]8;;', '\033]8;;\a')
+    }
+    # define protocols for checking text later on
+    protocols = ["http://", "https://", "ftp://", "ftps://", "mailto:", "tel:"]
+    if isinstance(tag, Tag) and tag.name in escape_codes and not tag.name == 'a':
+        start_code, end_code = escape_codes[tag.name]
+        tag.insert_before(start_code)
+        tag.insert_after(end_code)
+    elif isinstance(tag, Tag) and tag.name == 'a':
+        start_code, end_code = escape_codes['a']
+        href = tag['href']
+        protocol_used=[]
+        for protocol in protocols:
+            protocol_used.append(href.startswith(protocol))
+        has_protocol=any(protocol_used)
+        if not has_protocol and not href.startswith('/'):
+            href="http://"+href
+        elif href.startswith('/'):
+            href="http://fileinfo.com"+href
+        text = str(tag.string).replace('\n', '').replace('\r', '').replace('\t', '')
+        new_tag = Tag(name='a')
+        new_tag['href'] = href
+        new_tag.string = start_code + href + "\a" + text + end_code
+        tag.replace_with(new_tag)
+    elif isinstance(tag, NavigableString):
+        # Escape any special characters in the text
+        text = str(tag).replace('\n', '').replace('\r', '').replace('\t', '')
+        tag.replace_with(text)
+    else:
+        for child in tag.children:
+            format_html(child)
+
+
+@click.command(context_settings=dict(help_option_names=["-h", "--help"]))
+@click.argument("extension", type=str)
+def main(extension):
+    """
+    Get information on over 10,000 file extensions right from the terminal.
+    """
+    # Check if the user is connected to the internet
+    if not internet_connection():
+        click.echo("Please connect to the internet to use.")
+        raise
+
+    # spliting allows user give a file as
+    # argument or file extension with or without dot
+    # like filename.extension .extension or extension
+    # But first try for extensions like if tar.gz or tar.bz2, etc.
+    extensions_split = extension.split(".")
+    if len(extensions_split) > 1 and valid_extension(extensions_split[-2] + '.' + extensions_split[-1]):
+        extension = extensions_split[-2] + '.' + extensions_split[-1]
+    # incase it is an extension like py, gz, js, html, etc.
+    elif valid_extension(extensions_split[-1]):
+        extension = extensions_split[-1]
+    else:
+        click.echo("Sorry, but that extension is not valid")
+        raise
+    # iniate url
+    url = f"https://fileinfo.com/extension/{extension.lstrip('.')}"
+
+    # create cached response
+    html = requests.get(url).text
+
+    file_type = get_file_type(extension)
+    description = get_description(extension)
+
+    click.echo("\033[1mFull form: \033[0m" + file_type)
+    click.echo("\033[1m\nWhat is a " + extension.lstrip(".") + " file?\033[0m")
+    click.echo(description)
+
+
+if __name__ == "__main__":
+    main()
